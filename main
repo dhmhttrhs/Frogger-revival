@@ -1,0 +1,603 @@
+import pygame
+import random
+import time
+
+pygame.init()
+
+class Color:
+    yellow = (255, 255, 0)
+    black = (0, 0, 0)
+    red = (255, 0, 0)
+    green = (0, 255, 0)
+    white = (255, 255, 255)
+    blue = (0, 0, 255)
+    purple = (255, 0, 255)
+
+class Object:
+    def __init__(self):
+        self.direction = random.choice(["rtl", "ltr"]) #κατευθυνση
+        self.speed = 5 #ταχυτητα
+
+    def show(self):
+        if self.direction == 'ltr':
+            Game.dsply.blit(self.image, (self.x, self.y)) #εμφανιση εικονας στην οθόνη
+        else:
+            Game.dsply.blit(pygame.transform.flip(
+                self.image, True, False), (self.x, self.y)) #αντιστροφη
+
+    def move(self):
+        if not Game.time_frozen:
+            if self.direction == 'ltr':
+                self.x += self.speed #μετακίνηση προς δεξια
+            else:
+                self.x -= self.speed
+        if Game.speed_reduction:
+            self.speed /= 2 #μειωση ταχύτητας /2
+
+class Wood(Object):
+    def __init__(self):
+        super().__init__()
+        if self.direction == 'ltr':
+            self.x = -50
+            self.y = random.choice([80, 180, 280]) #τχαια επιλογη θεσης y
+        else:
+            self.x = Game.width + 50
+            self.y = random.choice([130, 230])
+        self.image = pygame.image.load('assets/img/wood.png')
+
+    def move(self):
+        if not Game.time_frozen:
+            if Game.speed_reduction:
+                self.speed = 2  # μειωση ταχυτητας
+            else:
+                self.speed = 5 #κανονικη
+
+            super().move()
+
+class Car(Object):
+    cars_pic = ['car1.png', 'car2.png', 'car3.png', 'car4.png', 'car5.png']
+
+    def __init__(self):
+        super().__init__()
+        if self.direction == 'ltr':
+            self.x = -120
+            self.y = random.choice([400, 500, 600])
+            self.base_speed = random.randint(5, 10) # βασική ταχυτητα
+        else:
+            self.x = Game.width + 120 # αρχική θεση
+            self.y = random.choice([450, 550])
+            self.base_speed = random.randint(5, 10)
+        self.speed = self.base_speed
+        self.selected_car = 'assets/img/' + random.choice(Car.cars_pic)
+        self.image = pygame.image.load(self.selected_car) #φορτωση εικονας
+
+    def move(self):
+        if not Game.time_frozen:
+
+            if Game.speed_reduction:
+                self.speed = self.base_speed / 2
+            else:
+                self.speed = self.base_speed
+
+            super().move()
+
+class Frog:
+    def __init__(self, x, y, image):
+        self.x = x
+        self.y = y
+        self.image = pygame.image.load(image)
+        self.speed = 50
+        self.area = Game.dsply.blit(self.image, (self.x, self.y))
+        self.moving = '' #κατευθυνση κινησης
+
+        if self.y == Game.height:
+            self.x = Game.width / 2 - 50
+            self.y = Game.height - 60
+
+    def show(self):
+        self.area = Game.dsply.blit(self.image, (self.x, self.y))
+
+    def move(self):
+        if self.moving == 'ltr':
+            self.x += 5
+        elif self.moving == 'rtl':
+            self.x -= 5
+            if frogs[0].x < 0 or frogs[0].x > Game.width - 50 or frogs[0].y < 0 or frogs[0].y > Game.height - 50:
+                Game.is_gameOver = True
+
+class PowerUp(Object):
+    def __init__(self, image, size=50):
+        super().__init__()
+        self.size = size #μεγεθος εικονας
+        self.image = pygame.transform.scale(pygame.image.load(image), (size, size))
+        self.x = random.randint(0, Game.width - size)
+        self.y = random.randint(0, Game.height - size)
+        self.active = False #flag για το powerup
+
+    def check_collision(self, frog_rect):
+        return frog_rect.colliderect(pygame.Rect(self.x, self.y, self.size, self.size))
+
+class TimeFreezePowerUp(PowerUp):
+    def __init__(self):
+        super().__init__('assets/img/freeze_time.png')
+
+    def activate(self):
+        Game.freeze_time() #ενεργοποιηση λειτουργίας
+        pygame.mixer.Sound('assets/sounds/powerup.mp3').play() # αναπαραγωγή ηχου
+
+class ScoreMultiplierPowerUp(PowerUp):
+    def __init__(self):
+        super().__init__('assets/img/double_score.png')
+
+    def activate(self):
+        Game.activate_score_multiplier()
+        pygame.mixer.Sound('assets/sounds/powerup.mp3').play()
+
+class SpeedReductionPowerUp(PowerUp):
+    def __init__(self):
+        super().__init__('assets/img/slow_motion.png')
+
+    def activate(self):
+        Game.reduce_speed()
+        for car in cars:
+            car.speed /= 2
+        pygame.mixer.Sound('assets/sounds/powerup.mp3').play()
+
+class Game:
+    width = 600 #πλατος παραθύρου
+    height = 712 #υψος παραθυρου
+    dsply = pygame.display.set_mode((width, height))
+    fps = 30
+    score = 0
+    high_score = 0 #αρχικοποίηση του highscore και score
+    frog_count = 5
+    bg = pygame.image.load('assets/img/background.png')
+    clock = pygame.time.Clock()
+    font = pygame.font.Font('assets/font/atari_full.ttf', 32)
+    font2 = pygame.font.Font('assets/font/atari_full.ttf', 16)
+    is_gameOver = False #ελεγχος αν το παιχνιδι εχει τελειωσει
+    destenations = [[19, 55], [135, 175], [255, 295], [375, 415], [495, 535]]
+    music_score_interval = 1
+    current_track = 1
+    time_frozen = False
+    score_multiplier = False
+    speed_reduction = False
+    time_frozen_cooldown_active = False
+    score_multiplier_cooldown_active = False
+    speed_reduction_cooldown_active = False
+    time_frozen_cooldown_start_time = 0
+    score_multiplier_cooldown_start_time = 0
+    speed_reduction_cooldown_start_time = 0
+
+    frogs = []
+
+    @staticmethod
+    def update_high_score():
+        if Game.score > Game.high_score:
+            Game.high_score = Game.score
+
+    @staticmethod
+    def display_score(): #εμφανιση score & highscore
+        score_text = Game.font2.render(f'Score: {Game.score}', True, Color.black)
+        high_score_text = Game.font2.render(f'High Score: {Game.high_score}', True, Color.black)
+        Game.dsply.blit(score_text, (10, Game.height - 50))
+        Game.dsply.blit(high_score_text, (10, Game.height - 30))
+
+    @staticmethod
+    def reset_score(): #επαναφορα score
+        Game.score = 0
+
+    @staticmethod
+    def load_music(): #φορτωση mp3 αρχειου
+        pygame.mixer.music.load(f'music{Game.current_track}.mp3')
+        pygame.mixer.music.set_volume(1.5)
+        pygame.mixer.music.play(-1)
+
+    @staticmethod
+    def change_music(score):
+        if score % Game.music_score_interval == 0:
+            Game.current_track = (Game.current_track % 3) + 1
+            pygame.mixer.music.load(f'music{Game.current_track}.mp3')
+            pygame.mixer.music.play(-1)
+
+    @staticmethod
+    def freeze_time():
+        Game.time_frozen = True
+        Game.time_frozen_cooldown_active = True
+        Game.time_frozen_cooldown_start_time = time.time()
+        pygame.time.set_timer(pygame.USEREVENT, 2000)
+
+    @staticmethod
+    def activate_score_multiplier():
+        Game.score_multiplier = True
+        Game.score_multiplier_cooldown_active = True
+        Game.score_multiplier_cooldown_start_time = time.time()
+
+    @staticmethod
+    def reduce_speed():
+        Game.speed_reduction = True
+        Game.speed_reduction_cooldown_active = True
+        Game.speed_reduction_cooldown_start_time = time.time()
+
+    @staticmethod
+    def update_cooldown_status(): #ενημερωση του cooldown
+        current_time = time.time()
+        if current_time - Game.time_frozen_cooldown_start_time >= 2:
+            Game.time_frozen_cooldown_active = False
+        if current_time - Game.score_multiplier_cooldown_start_time >= 5:
+            Game.score_multiplier_cooldown_active = False
+        if current_time - Game.speed_reduction_cooldown_start_time >= 7:
+            Game.speed_reduction_cooldown_active = False
+
+    @staticmethod
+    def display_cooldown_status(): #εμφανιση υπολοιπου cooldown
+        if Game.time_frozen_cooldown_active:
+            remaining_time = int(2 - (time.time() - Game.time_frozen_cooldown_start_time))
+            cooldown_text = Game.font2.render(f'Time Freeze Cooldown: {remaining_time}', True, Color.blue)
+            text_rect = cooldown_text.get_rect()
+            text_rect.bottomright = (Game.width - 10, Game.height - 10)
+            Game.dsply.blit(cooldown_text, text_rect)
+        if Game.score_multiplier_cooldown_active:
+            remaining_time = int(5 - (time.time() - Game.score_multiplier_cooldown_start_time))
+            cooldown_text = Game.font2.render(f'Score Multiplier Cooldown: {remaining_time}', True, Color.purple)
+            text_rect = cooldown_text.get_rect()
+            text_rect.bottomright = (Game.width - 10, Game.height - 30)
+            Game.dsply.blit(cooldown_text, text_rect)
+        if Game.speed_reduction_cooldown_active:
+            remaining_time = int(7 - (time.time() - Game.speed_reduction_cooldown_start_time))
+            cooldown_text = Game.font2.render(f'Speed Reduction Cooldown: {remaining_time}', True, Color.yellow)
+            text_rect = cooldown_text.get_rect()
+            text_rect.bottomright = (Game.width - 10, Game.height - 50)
+            Game.dsply.blit(cooldown_text, text_rect)
+
+    @staticmethod
+    def draw_power_ups(power_ups):
+        for power_up in power_ups:
+            if not power_up.active:
+                Game.dsply.blit(power_up.image, (power_up.x, power_up.y))
+
+    @staticmethod
+    def menu(): #setup για το αρχικο μενου
+        pygame.mixer.music.load('assets/sounds/music3.mp3')
+        pygame.mixer.music.set_volume(0.5)
+        pygame.mixer.music.play(-1)
+
+        menu_bg = pygame.image.load('assets/img/background.png')
+        title_font = pygame.font.Font('assets/font/atari_full.ttf', 60)
+        menu_font = pygame.font.Font('assets/font/atari_full.ttf', 40)
+        credit_font = pygame.font.Font('assets/font/atari_full.ttf', 12)
+        control_font = pygame.font.Font('assets/font/atari_full.ttf', 12)
+        instruction_font = pygame.font.Font('assets/font/atari_full.ttf', 20)
+
+        title_text = title_font.render('Frogger', True, (255, 255, 255))
+        title_rect = title_text.get_rect(center=(Game.width // 2 + 10, 150))
+        instruction_text = instruction_font.render('Double Tap Space to play!', True, Color.red)
+
+        menu_text1 = menu_font.render('1 Player', True, (20, 20, 0))
+        menu_text2 = menu_font.render('2 Players', True, (20, 0, 20))
+        text_rect1 = menu_text1.get_rect(center=(Game.width // 2, Game.height // 2 - 50))
+        text_rect2 = menu_text2.get_rect(center=(Game.width // 2, Game.height // 2 + 50))
+        instruction_rect = instruction_text.get_rect(center=(Game.width // 2, Game.height // 2 + 120))
+
+        credit_text = credit_font.render('Made by Perfect Balance', True, (11, 230, 131))
+        credit_rect = credit_text.get_rect(center=(Game.width // 2, Game.height // 2 + 170))
+
+        selected = 1
+        color_change_counter = 0
+
+
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    exit()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_UP or event.key == pygame.K_DOWN:
+                        selected = 3 - selected
+                    elif event.key == pygame.K_RETURN:
+                        if selected == 1:
+                            Game.frog_count = 1
+                        elif selected == 2:
+                            Game.frog_count = 2
+                        return
+
+
+            if color_change_counter % 20 == 0:
+                title_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                title_text = title_font.render('Frogger', True, title_color)
+            color_change_counter += 1
+
+
+            menu_bg.blit(title_text, title_rect)
+            menu_bg.blit(menu_text1, text_rect1)
+            menu_bg.blit(menu_text2, text_rect2)
+            menu_bg.blit(credit_text, credit_rect)
+
+            if selected != 1:
+                pygame.draw.rect(menu_bg, (255, 255, 0), text_rect1)
+            if selected != 2:
+                pygame.draw.rect(menu_bg, (255, 0, 255), text_rect2)
+
+
+            if selected == 1:
+                pygame.draw.rect(menu_bg, (255, 255, 255), text_rect1, 4)
+            elif selected == 2:
+                pygame.draw.rect(menu_bg, (255, 255, 255), text_rect2, 4)
+
+
+            player1_text = control_font.render('Player 1: WASD', True, (255, 255, 0))
+            player2_text = control_font.render('Player 2: Arrow keys', True, (255, 0, 255))
+            player1_rect = player1_text.get_rect(bottomleft=(10, Game.height - 70))
+            player2_rect = player2_text.get_rect(
+                bottomright=(Game.width - 10, Game.height - 70))
+            menu_bg.blit(player1_text, player1_rect)
+            menu_bg.blit(player2_text, player2_rect)
+            menu_bg.blit(instruction_text, instruction_rect)
+
+            Game.dsply.blit(menu_bg, (0, 0))
+            pygame.display.flip()
+            Game.clock.tick(Game.fps)
+
+    @staticmethod
+    def play():
+        global frogs
+        frogs = []
+
+        Game.menu()
+
+        if Game.frog_count == 2:
+            frogs = [Frog(Game.width / 2 - 40, Game.height - 60, "assets/img/frog1.png"),
+                     Frog(Game.width / 2 - 60, Game.height - 60,
+                          "assets/img/frog2.png")]
+        elif Game.frog_count == 1:
+            frogs = [Frog(Game.width / 2 - 50, Game.height - 60, "assets/img/frog1.png")]
+
+        if Game.frog_count == 1:
+            frogs.pop()
+
+
+        countdown_sound = pygame.mixer.Sound('assets/sounds/countdown.mp3')
+        cooldown_active = True
+        cooldown_start_time = time.time()
+
+        Game.is_gameOver = False
+        Game.load_music()
+
+        if Game.frog_count == 2:
+            frogs = [Frog(Game.width / 2 - 45, Game.height - 60, "assets/img/frog1.png"),
+                 Frog(Game.width / 2 - 65, Game.height - 60, "assets/img/frog2.png")]
+        elif Game.frog_count == 1:
+
+            frogs = [Frog(Game.width / 2 - 50, Game.height - 60, "assets/img/frog1.png")]
+        global cars
+        cars = []
+        woods = []
+        power_ups = []
+
+        while True:
+            current_time = time.time()
+
+            Game.update_cooldown_status()
+
+
+            if current_time - cooldown_start_time >= 2:
+                cooldown_active = False
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    exit()
+                if event.type == pygame.KEYDOWN:
+                    if not cooldown_active:
+                        if event.key == pygame.K_a: #επιλογή πληκτρων κινησεως
+                            frogs[0].x -= 50
+                        elif event.key == pygame.K_d:
+                            frogs[0].x += 50
+                        elif event.key == pygame.K_w:
+                            frogs[0].y -= 50
+                            if frogs[0].y == 302:
+                                frogs[0].y -= 20
+                        elif event.key == pygame.K_s:
+                            frogs[0].y += 50
+                            if frogs[0].y == 332:
+                                frogs[0].y += 20
+                        elif event.key == pygame.K_LEFT:
+                            frogs[1].x -= 50
+                        elif event.key == pygame.K_RIGHT:
+                            frogs[1].x += 50
+                        elif event.key == pygame.K_UP:
+                            frogs[1].y -= 50
+                            if frogs[1].y == 302:
+                                frogs[1].y -= 20
+                        elif event.key == pygame.K_DOWN:
+                            frogs[1].y += 50
+                            if frogs[1].y == 332:
+                                frogs[1].y += 20
+                        frogs[0].moving = ''
+                        if len(frogs) > 1:
+                            frogs[1].moving = ''
+                if event.type == pygame.USEREVENT:
+                    Game.time_frozen = False
+
+            if random.random() < 0.1:
+                cars.append(Car())
+            if random.random() < 0.025:
+                woods.append(Wood())
+            if not Game.time_frozen:
+                if random.random() < 0.0009:
+                    power_ups.append(TimeFreezePowerUp())
+                elif random.random() < 0.0015:
+                    power_ups.append(ScoreMultiplierPowerUp())
+                elif random.random() < 0.001:
+                    power_ups.append(SpeedReductionPowerUp())
+            for car in cars:
+                car.move()
+
+            for wood in woods:
+                wood.move()
+
+            Game.dsply.blit(Game.bg, (0, 0))
+
+            for car in cars:
+                car.show()
+
+            for wood in woods:
+                wood.show()
+
+            for frog in frogs:
+                frog.show()
+
+            if Game.frog_count > 0:
+                if frogs:
+                    if frogs[0].moving == 'rtl' or frogs[0].moving == 'ltr':
+                        frogs[0].move()
+            if Game.frog_count == 2:
+                if len(Game.frogs) > 1:
+                    if len(frogs) > 1:
+                        if frogs[1].moving == 'rtl' or frogs[1].moving == 'ltr':
+                            frogs[1].move()
+
+            if len(frogs) > 1:
+                if frogs[1].x < 0 or frogs[1].x > Game.width - 50 or frogs[1].y < 0 or frogs[1].y > Game.height - 50:
+                    Game.is_gameOver = True
+            if frogs[0].y > 400:
+                for car in cars:
+                    if frogs[0].area.colliderect(pygame.Rect(car.x, car.y, 100, 51)):
+                        Game.is_gameOver = True
+
+            elif frogs[0].y < 300 and frogs[0].y > 80:
+                if len(woods) >= 1:
+                    for wood in woods:
+                        if frogs[0].area.colliderect(pygame.Rect(wood.x, wood.y, 201, 51)):
+                            frogs[0].moving = wood.direction
+
+                    if not any(frogs[0].area.colliderect(pygame.Rect(wood.x, wood.y, 201, 51)) for wood in woods):
+                        Game.is_gameOver = True
+
+                else:
+                    if frogs[0].y >= 282:
+                        Game.is_gameOver = True
+
+            elif frogs[0].y < 80:
+                for des in Game.destenations:
+                    if frogs[0].x >= des[0] and frogs[0].x < des[1]:
+                        Game.destenations.remove(des)
+                        frogs.append(Frog(Game.width / 2 - 50, Game.height - 60, "assets/img/frog.png"))
+                        if Game.score_multiplier:
+                            Game.score += 2
+                        else:
+                            Game.score += 1
+                        Game.frog_count -= 1
+                        break
+                else:
+                    Game.is_gameOver = True
+
+
+            if len(frogs) > 1 and (frogs[1].x < 0 or frogs[1].x > Game.width - 50 or frogs[1].y < 0 or frogs[1].y > Game.height - 50):
+                Game.is_gameOver = True
+            if len(frogs) > 1 and frogs[1].y > 400:
+                for car in cars:
+                    if frogs[1].area.colliderect(pygame.Rect(car.x, car.y, 100, 51)):
+                        Game.is_gameOver = True
+
+
+            elif len(frogs) > 1 and frogs[1].y < 300 and frogs[1].y > 80:
+                if len(woods) >= 1:
+                    for wood in woods:
+                        if frogs[1].area.colliderect(pygame.Rect(wood.x, wood.y, 201, 51)):
+                            frogs[1].moving = wood.direction
+
+                    if not any(frogs[1].area.colliderect(pygame.Rect(wood.x, wood.y, 201, 51)) for wood in woods):
+                        Game.is_gameOver = True
+
+                else:
+                    if frogs[1].y >= 282:
+                        Game.is_gameOver = True
+
+
+            elif len(frogs) > 1 and frogs[1].y < 80:
+                for des in Game.destenations:
+                    if frogs[1].x >= des[0] and frogs[1].x < des[1]:
+                        Game.destenations.remove(des)
+                        frogs.append(Frog(Game.width / 2 - 50, Game.height - 60, "assets/img/frog.png"))
+                        if Game.score_multiplier:
+                            Game.score += 2
+                        else:
+                            Game.score += 1
+                        Game.frog_count -= 1
+                        break
+                else:
+                    Game.is_gameOver = True
+            if frog.y < 300 and frog.y > 80: #ελεγχος ωστε ο βατραχος να στεκεται στον κορμο
+                on_log = False
+                for wood in woods:
+                    if frog.area.colliderect(pygame.Rect(wood.x, wood.y, 201, 51)):
+                        frog.moving = wood.direction
+                        on_log = True
+                        break
+                if not on_log:
+                    frog.moving = ''
+
+            frog.move()
+
+            if Game.is_gameOver or Game.frog_count == 0:
+                if Game.is_gameOver:
+                    text1 = Game.font.render('Game Over!', True, Color.red, Color.black)
+                    text2 = Game.font2.render('press any key  to continue', True, Color.red, Color.black)
+
+                if Game.frog_count == 0:
+                    text1 = Game.font.render('You Win!', True, Color.green, Color.yellow)
+                    text2 = Game.font2.render('press any key  to continue', True, Color.green, Color.yellow)
+
+                textRect1 = text1.get_rect()
+                textRect1.center = (Game.width / 2, Game.height / 2)
+                textRect2 = text2.get_rect()
+                textRect2.center = (Game.width / 2, Game.height / 2 + 50)
+                Game.update_high_score()
+
+                while True:
+                    Game.dsply.blit(text1, textRect1)
+                    Game.dsply.blit(text2, textRect2)
+                    frogs[-1].show()
+                    pygame.display.update()
+                    Game.clock.tick(Game.fps)
+                    for event in pygame.event.get():
+                        if event.type == pygame.QUIT:
+                            exit()
+                        elif event.type == pygame.KEYDOWN:
+                            Game.play()
+
+            Game.display_score()
+            Game.display_cooldown_status()
+
+            if cooldown_active:
+                remaining_time = int(2 - (current_time - cooldown_start_time))
+                countdown_text = Game.font.render(f'Cooldown: {remaining_time}', True, Color.blue)
+                countdown_rect = countdown_text.get_rect(center=(Game.width // 2, Game.height // 2))
+                Game.dsply.blit(countdown_text, countdown_rect)
+                if remaining_time != 2 and remaining_time != 0:
+                    countdown_sound.play()
+
+
+            Game.draw_power_ups(power_ups)
+
+
+            for power_up in power_ups:
+                if not power_up.active and power_up.check_collision(frogs[0].area):
+                    power_up.activate()
+                    power_up.active = True
+                    power_ups.remove(power_up)
+                if len(frogs) > 1 and not power_up.active and power_up.check_collision(frogs[1].area):
+                    power_up.activate()
+                    power_up.active = True
+                    power_ups.remove(power_up)
+
+            pygame.display.flip() #τερματισμος παιχνιδιού
+            Game.clock.tick(Game.fps)
+
+if __name__ == '__main__':
+    Game.menu()
+    Game.play()
+
+
+
+
+    #made by perfect balance for ionian university 2024
